@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURACIÓN DE LA APLICACIÓN WEB
+# 1. CONFIGURACIÓN DEL APLICATIVO WEB
 # -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Control Financiero Personal",
@@ -12,56 +12,46 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilo visual moderno
-st.markdown("""
-    <style>
-    .main { background-color: #F8F9FA; }
-    .stMetric {
-        background-color: #FFFFFF;
-        padding: 18px;
-        border-radius: 12px;
-        box-shadow: 0px 4px 12px rgba(0,0,0,0.05);
-        border-top: 4px solid #1E88E5;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("📊 Control & Dashboard Financiero Personal")
-st.caption("Sincronizado automáticamente con tu archivo en Google Drive")
+st.caption("Sincronización en tiempo real con Google Drive / Google Sheets")
 st.markdown("---")
 
-# URL de publicación en formato CSV desde Google Sheets
-URL_PUBLIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS_6bYgfZj3uKZ_g-zxDZToMdk_17SSWKdszzbjaaqm60dAx-D5GtuA9h5Fq1rs_c4UZy5yBcEH0Gwd/pub?gid=706875207&single=true&output=csv"
+# ID de tu archivo de Google Sheets
+SHEET_ID = "1izhKwlt6UnFHF9UFjq5aU6QEpVwVV8xgr-kOz3678Rg"
+# URL en formato Google Viz Query (No requiere publicar en la web y no expira)
+URL_GVIZ = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
 
-@st.cache_data(ttl=5) # Refresca automáticamente los datos cada 5 segundos
-def cargar_y_limpiar_datos():
+@st.cache_data(ttl=5) # Refresca datos automáticamente cada 5 segundos
+def cargar_datos():
     try:
-        # Cargar los datos crudos sin asumir cabeceras fijas
-        df_raw = pd.read_csv(URL_PUBLIC_CSV, header=None)
+        # Cargar tabla desde Google Viz API
+        df_raw = pd.read_csv(URL_GVIZ)
         
-        # 1. Eliminar columnas que estén completamente vacías (columna A vacía)
-        df_raw = df_raw.dropna(how='all', axis=1)
+        # Eliminar columnas sin nombre o vacías
+        df_raw = df_raw.loc[:, ~df_raw.columns.str.contains('^Unnamed')].dropna(how='all', axis=1)
         
-        # 2. Localizar la fila que contiene las cabeceras reales ("Categoría")
-        header_idx = None
-        for idx, row in df_raw.iterrows():
-            row_str = row.astype(str).str.lower()
-            if row_str.str.contains('categoría|categoria', case=False).any():
-                header_idx = idx
-                break
-        
-        if header_idx is not None:
-            # Asignar esa fila como nombres de columna
-            headers = df_raw.iloc[header_idx].values
-            df = df_raw.iloc[header_idx + 1:].copy()
-            df.columns = [str(h).strip() for h in headers]
+        # Si los encabezados reales están en una fila inferior, buscarlos
+        if 'Categoría' not in df_raw.columns and 'Categoria' not in df_raw.columns:
+            header_idx = None
+            for idx, row in df_raw.iterrows():
+                row_str = row.astype(str).str.lower()
+                if row_str.str.contains('categoría|categoria', case=False).any():
+                    header_idx = idx
+                    break
+            
+            if header_idx is not None:
+                headers = df_raw.iloc[header_idx].values
+                df = df_raw.iloc[header_idx + 1:].copy()
+                df.columns = [str(h).strip() for h in headers]
+            else:
+                df = df_raw.copy()
         else:
             df = df_raw.copy()
 
-        # Limpiar espacios en los nombres de las columnas
+        # Normalizar nombres de columnas
         df.columns = [str(c).strip() for c in df.columns]
 
-        # 3. Detectar dinámicamente las columnas de 'Categoría' y 'Monto ($)'
+        # Identificar columnas principales
         col_cat = [c for c in df.columns if 'categor' in c.lower()]
         col_monto = [c for c in df.columns if 'monto' in c.lower()]
 
@@ -69,11 +59,10 @@ def cargar_y_limpiar_datos():
             name_cat = col_cat[0]
             name_monto = col_monto[0]
 
-            # Filtrar solo registros que tengan valores válidos
             df = df.dropna(subset=[name_cat, name_monto]).copy()
             df = df.rename(columns={name_cat: 'Categoría', name_monto: 'Monto ($)'})
 
-            # Formatear montos numéricos correctamente
+            # Limpiar y convertir montos a números
             df['Monto ($)'] = (
                 df['Monto ($)']
                 .astype(str)
@@ -83,7 +72,7 @@ def cargar_y_limpiar_datos():
             )
             df['Monto ($)'] = pd.to_numeric(df['Monto ($)'], errors='coerce').fillna(0)
 
-            # Formatear la columna de fecha
+            # Formatear la fecha
             col_fecha = [c for c in df.columns if 'fecha' in c.lower()]
             if col_fecha:
                 df['Fecha'] = pd.to_datetime(df[col_fecha[0]], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
@@ -93,13 +82,13 @@ def cargar_y_limpiar_datos():
             return pd.DataFrame()
 
     except Exception as e:
-        st.error(f"Error procesando la información: {e}")
+        st.error(f"Error procesando la información de la nube: {e}")
         return pd.DataFrame()
 
-df = cargar_y_limpiar_datos()
+df = cargar_datos()
 
 if not df.empty:
-    # Clasificación de Ingresos vs. Gastos
+    # Separación de Ingresos y Gastos
     es_ingreso = df['Categoría'].str.contains('QUIN|Ingreso|Sueldo', case=False, na=False)
     df_ingresos = df[es_ingreso]
     df_gastos = df[~es_ingreso]
@@ -109,7 +98,7 @@ if not df.empty:
     balance = total_ingresos - total_gastos
 
     # -----------------------------------------------------------------------------
-    # 2. INDICADORES CLAVE Y RESUMEN FINANCIERO (KPIs)
+    # 2. METRICAS PRINCIPALES (KPIs)
     # -----------------------------------------------------------------------------
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("💰 Total Ingresos", f"${total_ingresos:,.0f} COP")
@@ -159,7 +148,7 @@ if not df.empty:
     st.markdown("---")
 
     # -----------------------------------------------------------------------------
-    # 4. SEMÁFORO Y ALERTAS DE LÍMITES PRESUPUESTALES
+    # 4. SEMÁFORO PRESUPUESTAL DE CONTROL DE LÍMITES
     # -----------------------------------------------------------------------------
     st.subheader("🚨 Semáforo de Control Presupuestal")
 
@@ -170,7 +159,7 @@ if not df.empty:
         st.caption("💳 **Tarjetas & Créditos (Máx 35% Ingresos)**")
         st.progress(min(deudas / limite_deuda, 1.0) if limite_deuda > 0 else 0)
         if deudas > limite_deuda:
-            st.error(f"❌ Alerta Deuda: ${deudas:,.0f} COP (Máx sugerido: ${limite_deuda:,.0f} COP)")
+            st.error(f"❌ Alerta Deuda: ${deudas:,.0f} COP (Límite: ${limite_deuda:,.0f} COP)")
         else:
             st.success(f"✅ Rango Seguro: ${deudas:,.0f} COP")
 
@@ -193,10 +182,10 @@ if not df.empty:
     st.markdown("---")
 
     # -----------------------------------------------------------------------------
-    # 5. TABLA Y HISTORIAL DE TRANSACCIONES
+    # 5. HISTORIAL Y TABLA DE MOVIMIENTOS
     # -----------------------------------------------------------------------------
     st.subheader("📝 Historial Completo de Movimientos")
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 else:
-    st.error("No se encontraron registros válidos en la hoja. Verifica que la fila de encabezados en Google Sheets contenga 'Categoría' y 'Monto ($)'.")
+    st.info("💡 Asegúrate de que el archivo en Google Sheets esté compartido con acceso 'Cualquier persona con el enlace puede ver'.")
