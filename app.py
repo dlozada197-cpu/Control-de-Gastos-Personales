@@ -38,17 +38,15 @@ st.markdown("---")
 # -----------------------------------------------------------------------------
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # Leemos la hoja indicando que los datos principales están en la Hoja 1
-    df_raw = conn.read(worksheet="Hoja 1", ttl=5)
+    # Cargar la hoja por su índice o nombre limpio
+    df_raw = conn.read(ttl=5)
 except Exception as e:
-    st.error(f"Error al conectar con Google Sheets: {e}")
+    st.error(f"Error de conexión: {e}")
     df_raw = pd.DataFrame()
 
 if not df_raw.empty:
-    # 1. Buscar en qué fila se encuentran los encabezados reales
-    # Revisa si la columna 'Categoría' está entre los nombres actuales o dentro de los valores de las filas
+    # 1. Encontrar la fila de encabezados reales
     if 'Categoría' not in df_raw.columns:
-        # Encontrar la fila que contiene la palabra 'Categoría'
         header_row_idx = None
         for i, row in df_raw.iterrows():
             if row.astype(str).str.contains('Categoría', case=False).any():
@@ -56,25 +54,26 @@ if not df_raw.empty:
                 break
         
         if header_row_idx is not None:
-            # Asignar los valores de esa fila como nombres de columna
             df_raw.columns = df_raw.iloc[header_row_idx].values
-            # Eliminar las filas de título/encabezado previo
             df = df_raw.iloc[header_row_idx + 1:].copy()
         else:
             df = df_raw.copy()
     else:
         df = df_raw.copy()
 
-    # 2. Limpieza de nombres de columnas y eliminación de columnas vacías
+    # 2. Limpieza de columnas
     df.columns = [str(c).strip() if pd.notna(c) else f"col_{i}" for i, c in enumerate(df.columns)]
     
     # 3. Filtrar registros válidos
     if 'Categoría' in df.columns and 'Monto ($)' in df.columns:
         df = df.dropna(subset=['Categoría', 'Monto ($)'])
-        df['Monto ($)'] = pd.to_numeric(df['Monto ($)'].astype(str).str.replace('$', '').str.replace(',', '').str.strip(), errors='coerce').fillna(0)
+        df['Monto ($)'] = pd.to_numeric(
+            df['Monto ($)'].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False).str.strip(), 
+            errors='coerce'
+        ).fillna(0)
         df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.strftime('%Y-%m-%d')
     else:
-        st.error("No se encontraron las columnas 'Categoría' o 'Monto ($)' en el archivo. Verifica la Hoja 1.")
+        st.warning("Revisa que los encabezados de tu Hoja 1 estén en la primera fila de Google Sheets.")
     # -----------------------------------------------------------------------------
     # 1. INDICADORES CLAVE DE PERFORMANCE (KPIs)
     # -----------------------------------------------------------------------------
