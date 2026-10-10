@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 
 # -----------------------------------------------------------------------------
 # 1. CONFIGURACIÓN DEL APLICATIVO WEB
@@ -13,22 +12,33 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Estilo visual moderno y limpio
+st.markdown("""
+    <style>
+    .main { background-color: #F8F9FA; }
+    .stMetric {
+        background-color: #FFFFFF;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0px 2px 8px rgba(0,0,0,0.05);
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("📊 Control & Dashboard Financiero Personal")
-st.caption("Sincronización en tiempo real con Google Drive / Google Sheets")
+st.caption("Sincronización en tiempo real con tu hoja en Google Drive")
 st.markdown("---")
 
-# ID de tu archivo de Google Sheets
-SHEET_ID = "1izhKwlt6UnFHF9UFjq5aU6QEpVwVV8xgr-kOz3678Rg"
-# URL en formato Google Viz Query (Evita errores HTTP 400 / 404)
-URL_CSV = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Hoja%201"
+# URL directa de publicación que generaste
+URL_PUBLIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS_6bYgfZj3uKZ_g-zxDZToMdk_17SSWKdszzbjaaqm60dAx-D5GtuA9h5Fq1rs_c4UZy5yBcEH0gwd/pub?gid=706875207&single=true&output=csv"
 
-@st.cache_data(ttl=5) # Refresca los datos automáticamente cada 5 segundos
+@st.cache_data(ttl=5) # Refresca datos automáticamente cada 5 segundos
 def cargar_datos():
     try:
-        # Cargar los datos crudos
-        df_raw = pd.read_csv(URL_CSV)
+        # Cargar CSV desde el enlace publicado de Google Sheets
+        df_raw = pd.read_csv(URL_PUBLIC_CSV)
         
-        # Si la primera fila es título de presentación, buscar la fila con las cabeceras reales
+        # Detectar la fila de encabezados si hay títulos iniciales
         if 'Categoría' not in df_raw.columns:
             header_idx = None
             for idx, row in df_raw.iterrows():
@@ -47,11 +57,11 @@ def cargar_datos():
         # Limpiar nombres de columnas
         df.columns = [str(c).strip() for c in df.columns if pd.notna(c)]
         
-        # Filtrar solo registros con Categoría y Monto válidos
+        # Filtrar solo filas válidas
         if 'Categoría' in df.columns and 'Monto ($)' in df.columns:
             df = df.dropna(subset=['Categoría', 'Monto ($)']).copy()
             
-            # Formatear la columna de Monto ($)
+            # Formatear montos numéricos
             df['Monto ($)'] = (
                 df['Monto ($)']
                 .astype(str)
@@ -66,13 +76,13 @@ def cargar_datos():
             return pd.DataFrame()
             
     except Exception as e:
-        st.error(f"Error al conectar con la hoja de cálculo: {e}")
+        st.error(f"Error al cargar la información: {e}")
         return pd.DataFrame()
 
 df = cargar_datos()
 
 if not df.empty:
-    # Separar Ingresos de Gastos
+    # Clasificación entre Ingresos y Gastos
     es_ingreso = df['Categoría'].str.contains('QUIN|Ingreso|Sueldo', case=False, na=False)
     df_ingresos = df[es_ingreso]
     df_gastos = df[~es_ingreso]
@@ -82,7 +92,7 @@ if not df.empty:
     balance = total_ingresos - total_gastos
 
     # -----------------------------------------------------------------------------
-    # 2. INDICADORES CLAVE (KPIs)
+    # 2. METRICAS / KPIs PRINCIPALES
     # -----------------------------------------------------------------------------
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("💰 Total Ingresos", f"${total_ingresos:,.0f} COP")
@@ -90,22 +100,22 @@ if not df.empty:
     
     color_balance = "normal" if balance >= 0 else "inverse"
     k3.metric("📈 Balance Disponible", f"${balance:,.0f} COP", 
-              delta=f"{(balance/total_ingresos)*100:.1f}% del Ingreso" if total_ingresos > 0 else "0%",
+              delta=f"{(balance/total_ingresos)*100:.1f}% restante" if total_ingresos > 0 else "0%",
               delta_color=color_balance)
 
     deudas = df_gastos[df_gastos['Categoría'].str.contains('Tarjeta|Credito|Crédito', case=False, na=False)]['Monto ($)'].sum()
     porcentaje_deuda = (deudas / total_ingresos * 100) if total_ingresos > 0 else 0
-    k4.metric("💳 Compromiso de Deuda", f"${deudas:,.0f} COP", delta=f"{porcentaje_deuda:.1f}% del Ingreso", delta_color="inverse")
+    k4.metric("💳 Servicio de Deuda", f"${deudas:,.0f} COP", delta=f"{porcentaje_deuda:.1f}% del Ingreso", delta_color="inverse")
 
     st.markdown("---")
 
     # -----------------------------------------------------------------------------
-    # 3. GRÁFICOS DIDÁCTICOS DE SALIDA Y ENTRADA DE DINERO
+    # 3. VISUALIZACIÓN GRÁFICA INTERACTIVA
     # -----------------------------------------------------------------------------
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("🍩 Gastos por Categoría")
+        st.subheader("🍩 Distribución de Gastos por Categoría")
         cat_summary = df_gastos.groupby('Categoría')['Monto ($)'].sum().reset_index()
         cat_summary = cat_summary.sort_values(by='Monto ($)', ascending=False)
         fig_donut = px.pie(cat_summary, values='Monto ($)', names='Categoría', hole=0.45,
@@ -114,7 +124,7 @@ if not df.empty:
         st.plotly_chart(fig_donut, use_container_width=True)
 
     with col2:
-        st.subheader("💳 Distribución por Método de Pago")
+        st.subheader("💳 Gastos por Método de Pago")
         pay_summary = df_gastos.groupby('Método de Pago')['Monto ($)'].sum().reset_index()
         fig_bar = px.bar(pay_summary, x='Método de Pago', y='Monto ($)', color='Método de Pago',
                          text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Safe)
@@ -124,45 +134,44 @@ if not df.empty:
     st.markdown("---")
 
     # -----------------------------------------------------------------------------
-    # 4. SEMÁFORO DE LÍMITES PRESUPUESTALES SUGERIDOS
+    # 4. SEMÁFORO Y ALERTAS DE LÍMITES PRESUPUESTALES
     # -----------------------------------------------------------------------------
-    st.subheader("🚨 Semáforo de Control de Dinero y Limites")
+    st.subheader("🚨 Semáforo de Control Presupuestal")
 
     lim1, lim2, lim3 = st.columns(3)
 
     limite_deuda = total_ingresos * 0.35
     with lim1:
-        st.caption("💳 **Servicio de Deuda (Tarjetas & Créditos)**")
+        st.caption("💳 **Tarjetas & Créditos (Máx 35% Ingresos)**")
         st.progress(min(deudas / limite_deuda, 1.0) if limite_deuda > 0 else 0)
         if deudas > limite_deuda:
-            st.error(f"❌ Sobrepasado: ${deudas:,.0f} (Máx sugerido: ${limite_deuda:,.0f})")
+            st.error(f"❌ Alerta Deuda: ${deudas:,.0f} (Límite: ${limite_deuda:,.0f})")
         else:
-            st.success(f"✅ Rango Seguro: ${deudas:,.0f} de ${limite_deuda:,.0f}")
+            st.success(f"✅ Rango Seguro: ${deudas:,.0f} COP")
 
     gastos_hormiga = df_gastos[df_gastos['Categoría'].isin(['Imprevistos', 'Alimentación', 'Entretenimiento'])]['Monto ($)'].sum()
     limite_hormiga = 250000
     with lim2:
-        st.caption("🍔 **Gastos Hormiga & Ocio**")
+        st.caption("🍔 **Gastos Variables & Ocio (Sugerido $250k)**")
         st.progress(min(gastos_hormiga / limite_hormiga, 1.0))
         if gastos_hormiga > limite_hormiga:
-            st.warning(f"⚠️ Alerta: ${gastos_hormiga:,.0f} (Tope recomendado: ${limite_hormiga:,.0f})")
+            st.warning(f"⚠️ Atención: ${gastos_hormiga:,.0f} COP")
         else:
-            st.success(f"✅ Bajo Control: ${gastos_hormiga:,.0f} de ${limite_hormiga:,.0f}")
+            st.success(f"✅ Bajo Control: ${gastos_hormiga:,.0f} COP")
 
     servicios_fijos = df_gastos[df_gastos['Categoría'].str.contains('Servicios|Administracion', case=False, na=False)]['Monto ($)'].sum()
-    limite_servicios = 550000
     with lim3:
-        st.caption("🏠 **Gastos Fijos Hogar**")
-        st.progress(min(servicios_fijos / limite_servicios, 1.0))
-        st.success(f"✅ Gastos Fijos en Rango: ${servicios_fijos:,.0f}")
+        st.caption("🏠 **Servicios Fijos Hogar**")
+        st.progress(min(servicios_fijos / 550000, 1.0))
+        st.success(f"✅ Gastos Fijos: ${servicios_fijos:,.0f} COP")
 
     st.markdown("---")
 
     # -----------------------------------------------------------------------------
-    # 5. TABLA FILTRABLE DE TRANSACCIONES
+    # 5. TABLA Y REGISTROS
     # -----------------------------------------------------------------------------
-    st.subheader("📝 Historial de Entradas y Salidas")
+    st.subheader("📝 Historial Completo de Movimientos")
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 else:
-    st.warning("⚠️ No se pudieron cargar datos desde la hoja. Asegúrate de haber completado la opción 'Publicar en la web' en Google Sheets.")
+    st.error("No se encontraron registros válidos en la hoja. Asegúrate de guardar los cambios en Google Drive.")
