@@ -202,7 +202,7 @@ if not df.empty:
                 deuda_cat = df_solo_credito.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
                 fig_deuda_cat = px.bar(
                     deuda_cat, x='Categoría', y='Monto ($)', color='Categoría',
-                    text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Oranges_r
+                    text_auto=',.0f', color_discrete_sequence=px.colors.sequential.Oranges_r
                 )
                 fig_deuda_cat.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
                 st.plotly_chart(fig_deuda_cat, use_container_width=True)
