@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilo profesional moderno
+# Estilos CSS profesionales
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -22,6 +22,13 @@ st.markdown("""
         border-radius: 12px;
         box-shadow: 0px 4px 12px rgba(0,0,0,0.05);
         border-top: 4px solid #1E88E5;
+    }
+    .card-deudas {
+        background-color: #FFF3E0;
+        border-left: 5px solid #FF9800;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 15px;
     }
     .card-fijos {
         background-color: #E3F2FD;
@@ -121,9 +128,10 @@ if not df.empty:
     total_gastos = df_gastos['Monto ($)'].sum()
     balance = total_ingresos - total_gastos
 
-    # CREACIÓN DE PESTAÑAS
-    tab1, tab2, tab3 = st.tabs([
+    # CREACIÓN DE PESTAÑAS MULTI-TAB
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📌 Resumen General & Dashboard", 
+        "💳 Control de Deudas (Estado Crédito)", 
         "🏠 Detalle de Gastos Fijos (Hogar)", 
         "🚨 Sondeo de Imprevistos & Fugas"
     ])
@@ -143,14 +151,11 @@ if not df.empty:
                   delta=f"{(balance/total_ingresos)*100:.1f}% del ingreso" if total_ingresos > 0 else "0%",
                   delta_color=color_balance)
 
-        mask_tc_credito = (
-            df[col_metodo].str.contains('Tarjeta credito|Credito', case=False, na=False) & 
-            df[col_estado].str.contains('Credito', case=False, na=False)
-        )
-        df_tc_pendiente = df[mask_tc_credito]
-        total_tc_pendiente = df_tc_pendiente['Monto ($)'].sum()
-        k4.metric("💳 Deuda TC Próxima Quincena", f"${total_tc_pendiente:,.0f} COP", 
-                  delta=f"{(total_tc_pendiente/total_ingresos)*100:.1f}% de la quincena" if total_ingresos > 0 else "0%", delta_color="inverse")
+        mask_credito = df[col_estado].str.contains('Credito|Crédito', case=False, na=False)
+        df_solo_credito = df[mask_credito]
+        total_credito_pendiente = df_solo_credito['Monto ($)'].sum()
+        k4.metric("💳 Deudas Pendientes (Crédito)", f"${total_credito_pendiente:,.0f} COP", 
+                  delta=f"{len(df_solo_credito)} obligaciones activas", delta_color="inverse")
 
         st.markdown("---")
 
@@ -174,13 +179,65 @@ if not df.empty:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
     # =========================================================================
-    # PESTAÑA 2: DETALLE DE GASTOS FIJOS (SERVICIOS, ADMON, MERCADO)
+    # PESTAÑA 2: AUDITORÍA DE DEUDAS Y COMPRAS EN ESTADO "CRÉDITO"
     # =========================================================================
     with tab2:
+        st.subheader("💳 Control y Auditoría de Deudas por Pagar")
+        st.markdown("Este apartado contabiliza exclusivamente las compras y compromisos que se encuentran registrados en **Estado 'Crédito'** (valores por liquidar).")
+
+        d1, d2, d3 = st.columns(3)
+        d1.metric("🏛️ Total Deuda Pendiente", f"${total_credito_pendiente:,.0f} COP")
+        d2.metric("🔢 Cantidad de Obligaciones", f"{len(df_solo_credito)} deudas")
+        
+        impacto_deuda = (total_credito_pendiente / total_ingresos * 100) if total_ingresos > 0 else 0
+        d3.metric("📊 Impacto sobre Quincena", f"{impacto_deuda:.1f}%")
+
+        st.markdown("---")
+
+        col_d1, col_d2 = st.columns([1, 1])
+
+        with col_d1:
+            st.markdown("##### 📊 Deudas por Categoría de Consumo")
+            if not df_solo_credito.empty:
+                deuda_cat = df_solo_credito.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
+                fig_deuda_cat = px.bar(
+                    deuda_cat, x='Categoría', y='Monto ($)', color='Categoría',
+                    text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Oranges_r
+                )
+                fig_deuda_cat.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
+                st.plotly_chart(fig_deuda_cat, use_container_width=True)
+
+        with col_d2:
+            st.markdown(f"""
+            <div class="card-deudas">
+                <h4 style="margin:0; color:#E65100;">📌 Resumen de Liquidación de Deudas</h4>
+                <p style="margin:5px 0 0 0; color:#BF360C;">
+                    <b>Compromisos activos:</b> {len(df_solo_credito)} compras a diferir/liquidar.<br>
+                    <b>Monto total acumulado:</b> ${total_credito_pendiente:,.0f} COP.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if col_banco and not df_solo_credito.empty:
+                deuda_banco = df_solo_credito.groupby(col_banco)['Monto ($)'].sum().reset_index()
+                st.markdown("##### 🏦 Desglose por Banco / Entidad")
+                st.dataframe(deuda_banco, use_container_width=True, hide_index=True)
+
+        st.markdown("##### 📝 Detalle Completo de Deudas en Estado Crédito")
+        cols_deuda = ['Fecha', 'Categoría', 'Descripción']
+        if col_banco:
+            cols_deuda.append(col_banco)
+        cols_deuda.extend([col_metodo, col_estado, 'Monto ($)'])
+        
+        st.dataframe(df_solo_credito[cols_deuda], use_container_width=True, hide_index=True)
+
+    # =========================================================================
+    # PESTAÑA 3: DETALLE DE GASTOS FIJOS (SERVICIOS, ADMON, MERCADO)
+    # =========================================================================
+    with tab3:
         st.subheader("🏠 Análisis Detallado de Gastos Fijos (Piso Base Mensual)")
         st.markdown("En esta pestaña se audita el presupuesto mínimo obligatorio para operar el hogar: **Energía, Agua, Gas, Internet, Administración y Mercado**.")
 
-        # Filtro de categorías fijas
         cats_fijas = [
             'Servicios - Energía', 'Servicios - Agua', 'Servicios - Gas', 
             'Servicios- Internet Hogar', 'Pago Administracion/parqueadero', 'Mercado'
@@ -223,9 +280,9 @@ if not df.empty:
         st.dataframe(df_fijos[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
 
     # =========================================================================
-    # PESTAÑA 3: SONDEO DE IMPREVISTOS Y FUGAS DE DINERO
+    # PESTAÑA 4: SONDEO DE IMPREVISTOS Y FUGAS DE DINERO
     # =========================================================================
-    with tab3:
+    with tab4:
         st.subheader("🚨 Sondeo de Imprevistos & Fugas de Dinero")
         st.markdown("Módulo de auditoría para identificar **transferencias de emergencia, compras fuera de programa y gastos imprevistos**.")
 
