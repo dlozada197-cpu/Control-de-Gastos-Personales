@@ -34,36 +34,47 @@ st.caption("Sincronizado automáticamente con tu archivo en Google Drive")
 st.markdown("---")
 
 # -----------------------------------------------------------------------------
-# CONEXIÓN AUTOMÁTICA CON GOOGLE DRIVE (GOOGLE SHEETS)
+# CONEXIÓN Y LECTURA ROBUSTA DESDE GOOGLE DRIVE (GOOGLE SHEETS)
 # -----------------------------------------------------------------------------
-# ttl=5 asegura que los datos se refresquen automáticamente cada 5 segundos
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    df = conn.read(ttl=5)
+    # Leemos la hoja indicando que los datos principales están en la Hoja 1
+    df_raw = conn.read(worksheet="Hoja 1", ttl=5)
 except Exception as e:
-    st.info("💡 **Nota:** Conecta la clave API de Google Sheets en tus Secrets de Streamlit para sincronización directa.")
-    # Carga de respaldo local para pruebas
-    df = pd.DataFrame()
+    st.error(f"Error al conectar con Google Sheets: {e}")
+    df_raw = pd.DataFrame()
 
-# Limpieza y preparación de datos
-if not df.empty:
-    # Normalizar nombres de columnas
-    df.columns = [str(col).strip() for col in df.columns]
+if not df_raw.empty:
+    # 1. Buscar en qué fila se encuentran los encabezados reales
+    # Revisa si la columna 'Categoría' está entre los nombres actuales o dentro de los valores de las filas
+    if 'Categoría' not in df_raw.columns:
+        # Encontrar la fila que contiene la palabra 'Categoría'
+        header_row_idx = None
+        for i, row in df_raw.iterrows():
+            if row.astype(str).str.contains('Categoría', case=False).any():
+                header_row_idx = i
+                break
+        
+        if header_row_idx is not None:
+            # Asignar los valores de esa fila como nombres de columna
+            df_raw.columns = df_raw.iloc[header_row_idx].values
+            # Eliminar las filas de título/encabezado previo
+            df = df_raw.iloc[header_row_idx + 1:].copy()
+        else:
+            df = df_raw.copy()
+    else:
+        df = df_raw.copy()
+
+    # 2. Limpieza de nombres de columnas y eliminación de columnas vacías
+    df.columns = [str(c).strip() if pd.notna(c) else f"col_{i}" for i, c in enumerate(df.columns)]
     
-    # Filtrar filas válidas que contengan monto y categoría
-    df = df.dropna(subset=['Categoría', 'Monto ($)'])
-    df['Monto ($)'] = pd.to_numeric(df['Monto ($)'], errors='coerce').fillna(0)
-    df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.strftime('%Y-%m-%d')
-
-    # Separar Ingresos y Gastos
-    es_ingreso = df['Categoría'].str.contains('QUIN|Ingreso|Sueldo', case=False, na=False)
-    df_ingresos = df[es_ingreso]
-    df_gastos = df[~es_ingreso]
-
-    total_ingresos = df_ingresos['Monto ($)'].sum()
-    total_gastos = df_gastos['Monto ($)'].sum()
-    balance = total_ingresos - total_gastos
-
+    # 3. Filtrar registros válidos
+    if 'Categoría' in df.columns and 'Monto ($)' in df.columns:
+        df = df.dropna(subset=['Categoría', 'Monto ($)'])
+        df['Monto ($)'] = pd.to_numeric(df['Monto ($)'].astype(str).str.replace('$', '').str.replace(',', '').str.strip(), errors='coerce').fillna(0)
+        df['Fecha'] = pd.to_datetime(df['Fecha'], errors='coerce').dt.strftime('%Y-%m-%d')
+    else:
+        st.error("No se encontraron las columnas 'Categoría' o 'Monto ($)' en el archivo. Verifica la Hoja 1.")
     # -----------------------------------------------------------------------------
     # 1. INDICADORES CLAVE DE PERFORMANCE (KPIs)
     # -----------------------------------------------------------------------------
