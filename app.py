@@ -203,7 +203,7 @@ if not df.empty:
             fijos_sum = df_fijos.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
             fig_fijos = px.bar(
                 fijos_sum, x='Categoría', y='Monto ($)', color='Categoría',
-                text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Blues_r
+                text_auto=',.0f', color_discrete_sequence=px.colors.sequential.Blues_r
             )
             fig_fijos.update_layout(showlegend=False, xaxis_title="", yaxis_title="COP ($)")
             st.plotly_chart(fig_fijos, use_container_width=True)
@@ -247,7 +247,7 @@ if not df.empty:
             if not df_imprevistos.empty:
                 fig_imp = px.bar(
                     df_imprevistos, x='Descripción', y='Monto ($)', color='Descripción',
-                    text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Reds_r
+                    text_auto=',.0f', color_discrete_sequence=px.colors.sequential.Reds_r
                 )
                 fig_imp.update_layout(showlegend=False, xaxis_title="", yaxis_title="COP ($)")
                 st.plotly_chart(fig_imp, use_container_width=True)
