@@ -30,7 +30,7 @@ st.caption("Sincronización en tiempo real con tu hoja en Google Drive")
 st.markdown("---")
 
 # URL directa de publicación que generaste
-URL_PUBLIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS_6bYgfZj3uKZ_g-zxDZToMdk_17SSWKdszzbjaaqm60dAx-D5GtuA9h5Fq1rs_c4UZy5yBcEH0Gwd/pub?gid=706875207&single=true&output=csv"
+URL_PUBLIC_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vS_6bYgfZj3uKZ_g-zxDZToMdk_17SSWKdszzbjaaqm60dAx-D5GtuA9h5Fq1rs_c4UZy5yBcEH0gwd/pub?gid=706875207&single=true&output=csv"
 
 @st.cache_data(ttl=5) # Refresca datos automáticamente cada 5 segundos
 def cargar_datos():
