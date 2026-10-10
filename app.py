@@ -3,16 +3,16 @@ import pandas as pd
 import plotly.express as px
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURACIÓN DEL APLICATIVO WEB
+# 1. CONFIGURACIÓN DEL APLICATIVO WEB Multi-Pestaña
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Control Financiero Personal",
+    page_title="Control Financiero Personal | Multi-Tab",
     page_icon="💳",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Estilo visual limpio y profesional
+# Estilo profesional moderno
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -23,9 +23,16 @@ st.markdown("""
         box-shadow: 0px 4px 12px rgba(0,0,0,0.05);
         border-top: 4px solid #1E88E5;
     }
-    .card-tc {
-        background-color: #FFF3E0;
-        border-left: 5px solid #FF9800;
+    .card-fijos {
+        background-color: #E3F2FD;
+        border-left: 5px solid #1976D2;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 15px;
+    }
+    .card-imprevistos {
+        background-color: #FFEBEE;
+        border-left: 5px solid #D32F2F;
         padding: 15px;
         border-radius: 10px;
         margin-bottom: 15px;
@@ -46,7 +53,7 @@ def cargar_datos():
         df_raw = pd.read_csv(URL_GVIZ)
         df_raw = df_raw.loc[:, ~df_raw.columns.str.contains('^Unnamed')].dropna(how='all', axis=1)
         
-        # Si la cabecera no está en la fila 0, buscarla dinámicamente
+        # Detectar cabecera real
         if 'Categoría' not in df_raw.columns and 'Categoria' not in df_raw.columns:
             header_idx = None
             for idx, row in df_raw.iterrows():
@@ -94,21 +101,18 @@ def cargar_datos():
             return pd.DataFrame()
 
     except Exception as e:
-        st.error(f"Error cargando los datos desde Google Drive: {e}")
+        st.error(f"Error de conexión con Google Drive: {e}")
         return pd.DataFrame()
 
 df = cargar_datos()
 
 if not df.empty:
-    # Identificar columnas opcionales / flexibles
     col_metodo = [c for c in df.columns if 'metodo' in c.lower() or 'pago' in c.lower()][0]
     col_estado = [c for c in df.columns if 'estado' in c.lower()][0]
-    
-    # Detectar columna Banco / Entidad
-    col_banco_list = [c for c in df.columns if 'banco' in c.lower() or 'entidad' in c.lower() or 'franquicia' in c.lower()]
+    col_banco_list = [c for c in df.columns if 'banco' in c.lower() or 'entidad' in c.lower()]
     col_banco = col_banco_list[0] if col_banco_list else None
 
-    # Separación general entre Ingresos y Gastos
+    # Clasificación General
     es_ingreso = df['Categoría'].str.contains('QUIN|Ingreso|Sueldo', case=False, na=False)
     df_ingresos = df[es_ingreso]
     df_gastos = df[~es_ingreso]
@@ -117,127 +121,148 @@ if not df.empty:
     total_gastos = df_gastos['Monto ($)'].sum()
     balance = total_ingresos - total_gastos
 
-    # -----------------------------------------------------------------------------
-    # 2. INDICADORES CLAVE GENERALES (KPIs)
-    # -----------------------------------------------------------------------------
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("💰 Total Ingresos", f"${total_ingresos:,.0f} COP")
-    k2.metric("💸 Total Gastos Registrados", f"${total_gastos:,.0f} COP")
-    
-    color_balance = "normal" if balance >= 0 else "inverse"
-    k3.metric("📈 Balance Disponible", f"${balance:,.0f} COP", 
-              delta=f"{(balance/total_ingresos)*100:.1f}% del ingreso" if total_ingresos > 0 else "0%",
-              delta_color=color_balance)
+    # CREACIÓN DE PESTAÑAS
+    tab1, tab2, tab3 = st.tabs([
+        "📌 Resumen General & Dashboard", 
+        "🏠 Detalle de Gastos Fijos (Hogar)", 
+        "🚨 Sondeo de Imprevistos & Fugas"
+    ])
 
-    # Filtrar compras a crédito
-    mask_tc_credito = (
-        df[col_metodo].str.contains('Tarjeta credito|Credito', case=False, na=False) & 
-        df[col_estado].str.contains('Credito', case=False, na=False)
-    )
-    df_tc_pendiente = df[mask_tc_credito]
-    total_tc_pendiente = df_tc_pendiente['Monto ($)'].sum()
-
-    porcentaje_tc_quincena = (total_tc_pendiente / total_ingresos * 100) if total_ingresos > 0 else 0
-    k4.metric("💳 Deuda TC Próxima Quincena", f"${total_tc_pendiente:,.0f} COP", 
-              delta=f"{porcentaje_tc_quincena:.1f}% de la quincena", delta_color="inverse")
-
-    st.markdown("---")
-
-    # -----------------------------------------------------------------------------
-    # 3. MÓDULO DE SEGMENTACIÓN POR BANCO Y TARJETA DE CRÉDITO
-    # -----------------------------------------------------------------------------
-    st.subheader("💳 Segmentación de Tarjetas de Crédito por Banco / Entidad")
-    st.markdown("Analiza exactamente **a qué entidad financiera** pertenece cada consumo en estado **'Crédito'** a pagar en la próxima quincena.")
-
-    tc_col1, tc_col2 = st.columns([1, 2])
-
-    with tc_col1:
-        st.markdown(f"""
-        <div class="card-tc">
-            <h3 style="margin:0; color:#E65100;">🏛️ Total Deuda Tarjetas</h3>
-            <h2 style="margin:5px 0; color:#B71C1C;">${total_tc_pendiente:,.0f} COP</h2>
-            <p style="margin:0; font-size:0.9em; color:#5D4037;">
-                <b>Total de consumos a liquidar:</b> {len(df_tc_pendiente)}<br>
-                <b>Impacto sobre la quincena:</b> {porcentaje_tc_quincena:.1f}%
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with tc_col2:
-        if not df_tc_pendiente.empty:
-            # Si existe la columna Banco / Entidad, agrupar por Banco
-            if col_banco:
-                st.markdown("##### 🏦 Distribución de Deuda por Banco / Entidad")
-                banco_summary = df_tc_pendiente.groupby(col_banco)['Monto ($)'].sum().reset_index()
-                fig_banco = px.bar(
-                    banco_summary, x=col_banco, y='Monto ($)', text_auto=',.0f',
-                    color=col_banco, color_discrete_sequence=px.colors.qualitative.Dark2
-                )
-                fig_banco.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)", height=260)
-                st.plotly_chart(fig_banco, use_container_width=True)
-            else:
-                st.markdown("##### 📊 Distribución del Crédito Pendiente por Categoría")
-                cat_tc = df_tc_pendiente.groupby('Categoría')['Monto ($)'].sum().reset_index()
-                fig_tc = px.bar(
-                    cat_tc, x='Categoría', y='Monto ($)', text_auto=',.0f',
-                    color='Categoría', color_discrete_sequence=px.colors.qualitative.Oranges
-                )
-                fig_tc.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)", height=260)
-                st.plotly_chart(fig_tc, use_container_width=True)
-                st.info("💡 **Consejo:** Agrega la columna `'Banco / Entidad'` a tu hoja de Google Sheets para ver el desglose por Banco aquí.")
-        else:
-            st.success("🎉 ¡Excelente! No tienes consumos pendientes en estado 'Crédito' para la próxima quincena.")
-
-    # Mostrar la tabla de detalles con la columna del Banco
-    if not df_tc_pendiente.empty:
-        st.markdown("##### 📝 Detalle de Compras Diferidas por Banco")
-        cols_mostrar = ['Fecha', 'Categoría', 'Descripción']
-        if col_banco:
-            cols_mostrar.append(col_banco)
-        cols_mostrar.extend([col_metodo, col_estado, 'Monto ($)'])
+    # =========================================================================
+    # PESTAÑA 1: RESUMEN GENERAL
+    # =========================================================================
+    with tab1:
+        st.subheader("📌 Resumen General del Flujo de Dinero")
         
-        st.dataframe(
-            df_tc_pendiente[cols_mostrar], 
-            use_container_width=True, 
-            hide_index=True
-        )
-
-    st.markdown("---")
-
-    # -----------------------------------------------------------------------------
-    # 4. GRÁFICOS GENERALES DEL FLUJO DE DINERO
-    # -----------------------------------------------------------------------------
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("🍩 Distribución Global de Gastos")
-        cat_summary = df_gastos.groupby('Categoría')['Monto ($)'].sum().reset_index()
-        cat_summary = cat_summary.sort_values(by='Monto ($)', ascending=False)
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("💰 Total Ingresos", f"${total_ingresos:,.0f} COP")
+        k2.metric("💸 Total Gastos Registrados", f"${total_gastos:,.0f} COP")
         
-        fig_donut = px.pie(
-            cat_summary, values='Monto ($)', names='Categoría', hole=0.45,
-            color_discrete_sequence=px.colors.qualitative.Prism
+        color_balance = "normal" if balance >= 0 else "inverse"
+        k3.metric("📈 Balance Disponible", f"${balance:,.0f} COP", 
+                  delta=f"{(balance/total_ingresos)*100:.1f}% del ingreso" if total_ingresos > 0 else "0%",
+                  delta_color=color_balance)
+
+        mask_tc_credito = (
+            df[col_metodo].str.contains('Tarjeta credito|Credito', case=False, na=False) & 
+            df[col_estado].str.contains('Credito', case=False, na=False)
         )
-        fig_donut.update_traces(textposition='inside', textinfo='percent+label')
-        st.plotly_chart(fig_donut, use_container_width=True)
+        df_tc_pendiente = df[mask_tc_credito]
+        total_tc_pendiente = df_tc_pendiente['Monto ($)'].sum()
+        k4.metric("💳 Deuda TC Próxima Quincena", f"${total_tc_pendiente:,.0f} COP", 
+                  delta=f"{(total_tc_pendiente/total_ingresos)*100:.1f}% de la quincena" if total_ingresos > 0 else "0%", delta_color="inverse")
 
-    with col2:
-        st.subheader("💳 Gastos por Método de Pago")
-        pay_summary = df_gastos.groupby(col_metodo)['Monto ($)'].sum().reset_index()
-        fig_bar = px.bar(
-            pay_summary, x=col_metodo, y='Monto ($)', color=col_metodo,
-            text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Safe
-        )
-        fig_bar.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.markdown("---")
 
-    st.markdown("---")
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            st.subheader("🍩 Distribución Global por Categoría")
+            cat_sum = df_gastos.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
+            fig_pie = px.pie(cat_sum, values='Monto ($)', names='Categoría', hole=0.45, color_discrete_sequence=px.colors.qualitative.Prism)
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig_pie, use_container_width=True)
 
-    # -----------------------------------------------------------------------------
-    # 5. HISTORIAL Y TABLA COMPLETA CON FILTROS
-    # -----------------------------------------------------------------------------
-    st.subheader("📝 Historial General de Movimientos")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+        with col_g2:
+            st.subheader("💳 Gastos por Método de Pago")
+            pay_sum = df_gastos.groupby(col_metodo)['Monto ($)'].sum().reset_index()
+            fig_bar = px.bar(pay_sum, x=col_metodo, y='Monto ($)', color=col_metodo, text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Safe)
+            fig_bar.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("📝 Historial General de Movimientos")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # =========================================================================
+    # PESTAÑA 2: DETALLE DE GASTOS FIJOS (SERVICIOS, ADMON, MERCADO)
+    # =========================================================================
+    with tab2:
+        st.subheader("🏠 Análisis Detallado de Gastos Fijos (Piso Base Mensual)")
+        st.markdown("En esta pestaña se audita el presupuesto mínimo obligatorio para operar el hogar: **Energía, Agua, Gas, Internet, Administración y Mercado**.")
+
+        # Filtro de categorías fijas
+        cats_fijas = [
+            'Servicios - Energía', 'Servicios - Agua', 'Servicios - Gas', 
+            'Servicios- Internet Hogar', 'Pago Administracion/parqueadero', 'Mercado'
+        ]
+        df_fijos = df_gastos[df_gastos['Categoría'].isin(cats_fijas)]
+        total_fijos = df_fijos['Monto ($)'].sum()
+        porcentaje_fijos = (total_fijos / total_ingresos * 100) if total_ingresos > 0 else 0
+
+        f1, f2, f3 = st.columns(3)
+        f1.metric("🏠 Total Gastos Fijos Hogar", f"${total_fijos:,.0f} COP")
+        f2.metric("📊 % del Ingreso Quincenal", f"{porcentaje_fijos:.1f}%")
+        f3.metric("📌 Promedio Estimado por Rubro", f"${(total_fijos/len(cats_fijas)):,.0f} COP")
+
+        st.markdown("---")
+
+        col_f1, col_f2 = st.columns([1, 1])
+
+        with col_f1:
+            st.markdown("##### 💡 Desglose por Servicio / Rubro Fijo")
+            fijos_sum = df_fijos.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
+            fig_fijos = px.bar(
+                fijos_sum, x='Categoría', y='Monto ($)', color='Categoría',
+                text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Blues_r
+            )
+            fig_fijos.update_layout(showlegend=False, xaxis_title="", yaxis_title="COP ($)")
+            st.plotly_chart(fig_fijos, use_container_width=True)
+
+        with col_f2:
+            st.markdown("""
+            <div class="card-fijos">
+                <h4 style="margin:0; color:#0D47A1;">📌 Cuadro Resumen de Facturación Fija</h4>
+                <p style="margin:5px 0 0 0; color:#1565C0;">
+                    Valores liquidados en el ciclo actual de servicios fijos e insumos.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.dataframe(fijos_sum, use_container_width=True, hide_index=True)
+
+        st.markdown("##### 📝 Registros Específicos de Gastos Fijos")
+        st.dataframe(df_fijos[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
+
+    # =========================================================================
+    # PESTAÑA 3: SONDEO DE IMPREVISTOS Y FUGAS DE DINERO
+    # =========================================================================
+    with tab3:
+        st.subheader("🚨 Sondeo de Imprevistos & Fugas de Dinero")
+        st.markdown("Módulo de auditoría para identificar **transferencias de emergencia, compras fuera de programa y gastos imprevistos**.")
+
+        df_imprevistos = df_gastos[df_gastos['Categoría'].str.contains('Imprevistos', case=False, na=False)]
+        total_imprevistos = df_imprevistos['Monto ($)'].sum()
+        porcentaje_imprevistos = (total_imprevistos / total_ingresos * 100) if total_ingresos > 0 else 0
+
+        i1, i2, i3 = st.columns(3)
+        i1.metric("🚨 Total Imprevistos Registrados", f"${total_imprevistos:,.0f} COP")
+        i2.metric("📊 Impacto sobre Ingresos", f"{porcentaje_imprevistos:.1f}%")
+        i3.metric("🔢 Número de Eventos", f"{len(df_imprevistos)} eventos")
+
+        st.markdown("---")
+
+        col_i1, col_i2 = st.columns([1, 1])
+
+        with col_i1:
+            st.markdown("##### 💸 Top Imprevistos / Fugas Registradas")
+            if not df_imprevistos.empty:
+                fig_imp = px.bar(
+                    df_imprevistos, x='Descripción', y='Monto ($)', color='Descripción',
+                    text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Reds_r
+                )
+                fig_imp.update_layout(showlegend=False, xaxis_title="", yaxis_title="COP ($)")
+                st.plotly_chart(fig_imp, use_container_width=True)
+
+        with col_i2:
+            st.markdown("""
+            <div class="card-imprevistos">
+                <h4 style="margin:0; color:#B71C1C;">🛡️ Plan de Mitigación de Fugas</h4>
+                <p style="margin:5px 0 0 0; color:#C62828;">
+                    <b>Recomendación:</b> Para evitar que los imprevistos descompensen el presupuesto operativo del hogar, destina un <b>fondo de reserva del 5% al 10%</b> al inicio de cada quincena exclusivamente para este rubro.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+            if not df_imprevistos.empty:
+                st.dataframe(df_imprevistos[['Fecha', 'Descripción', col_metodo, 'Monto ($)']], use_container_width=True, hide_index=True)
 
 else:
-    st.error("No se detectaron registros. Verifica que la hoja en Google Drive contenga la información.")
+    st.error("No se encontraron registros. Verifica la información en tu Google Sheet.")
