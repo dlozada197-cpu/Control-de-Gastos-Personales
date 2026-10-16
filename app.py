@@ -54,6 +54,13 @@ st.markdown("---")
 SHEET_ID = "1izhKwlt6UnFHF9UFjq5aU6QEpVwVV8xgr-kOz3678Rg"
 URL_GVIZ = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
 
+# Diccionario de meses en español
+MESES_ES = {
+    1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
+    5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
+    9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
+}
+
 @st.cache_data(ttl=5) # Refresca datos automáticamente cada 5 segundos
 def cargar_datos():
     try:
@@ -107,16 +114,23 @@ def cargar_datos():
                 df['Fecha_DT'] = pd.to_datetime('today')
                 df['Fecha'] = df['Fecha_DT'].dt.strftime('%Y-%m-%d')
 
-            # Asignación automática de Quincena por fecha
-            def asignar_quincena(row):
+            # ASIGNACIÓN DE CICLOS REALES DE PAGO:
+            # - Gastos del 15 al 29: financiados con el pago del 15 (1ra Quincena)
+            # - Gastos del 30 al 14: financiados con el pago de fin de mes (2da Quincena)
+            def asignar_ciclo(row):
                 dt = row['Fecha_DT']
                 if pd.isna(dt):
                     return "Sin Fecha"
-                quin = "1ra Quincena" if dt.day <= 15 else "2da Quincena"
-                mes_nombre = dt.strftime('%B %Y').capitalize()
-                return f"{quin} ({mes_nombre})"
+                if dt.day >= 15 and dt.day < 30:
+                    return f"1ra Quincena {MESES_ES[dt.month]} {dt.year} (Ciclo 15 al 29)"
+                elif dt.day >= 30:
+                    return f"2da Quincena {MESES_ES[dt.month]} {dt.year} (Ciclo 30 {MESES_ES[dt.month][:3]} al 14 prox)"
+                else: # Días 1 al 14
+                    prev_m = dt.month - 1 if dt.month > 1 else 12
+                    prev_y = dt.year if dt.month > 1 else dt.year - 1
+                    return f"2da Quincena {MESES_ES[prev_m]} {prev_y} (Ciclo 30 {MESES_ES[prev_m][:3]} al 14 prox)"
 
-            df['Período Quincenal'] = df.apply(asignar_quincena, axis=1)
+            df['Ciclo de Pago'] = df.apply(asignar_ciclo, axis=1)
 
             return df
         else:
@@ -135,25 +149,26 @@ if not df_completo.empty:
     col_banco = col_banco_list[0] if col_banco_list else None
 
     # -------------------------------------------------------------------------
-    # BARRA LATERAL: CONTROL DE PERIODO / AL DÍA
+    # SELECTOR DE CICLO / QUINCENA EN LA BARRA LATERAL
     # -------------------------------------------------------------------------
-    st.sidebar.header("🗓️ Selector de Período (Al Día)")
-    opciones_periodo = ["Todo el Historial (Acumulado)"] + sorted(list(df_completo['Período Quincenal'].dropna().unique()), reverse=True)
+    st.sidebar.header("🗓️ Selector de Quincena (Al Día)")
+    ciclos_disponibles = sorted(list(df_completo['Ciclo de Pago'].dropna().unique()), reverse=True)
+    opciones_periodo = ["Todo el Historial (Acumulado)"] + ciclos_disponibles
     
     periodo_seleccionado = st.sidebar.selectbox(
-        "Ver finanzas de:",
+        "Selecciona el ciclo a evaluar:",
         opciones_periodo,
         index=1 if len(opciones_periodo) > 1 else 0
     )
 
     if periodo_seleccionado != "Todo el Historial (Acumulado)":
-        df = df_completo[df_completo['Período Quincenal'] == periodo_seleccionado].copy()
-        st.info(f"📍 Mostrando datos específicos de: **{periodo_seleccionado}**")
+        df = df_completo[df_completo['Ciclo de Pago'] == periodo_seleccionado].copy()
+        st.info(f"📍 Mostrando finanzas del: **{periodo_seleccionado}**")
     else:
         df = df_completo.copy()
-        st.warning("⚠️ Mostrando **Todo el Historial Acumulado**. Para evaluar tu dinero al día, selecciona la quincena actual en el menú izquierdo.")
+        st.warning("⚠️ Mostrando **Todo el Historial Acumulado**. Para evaluar tu dinero al día con el pago del 15, selecciona la 1ra Quincena de Octubre en la barra lateral.")
 
-    # Clasificación de Ingresos y Gastos del Período
+    # Clasificación de Ingresos y Gastos del ciclo seleccionado
     es_ingreso = df['Categoría'].str.contains('QUIN|Ingreso|Sueldo', case=False, na=False)
     df_ingresos = df[es_ingreso]
     df_gastos = df[~es_ingreso]
@@ -165,30 +180,30 @@ if not df_completo.empty:
     # TABS MULTIPESTAÑA
     tab1, tab2, tab3, tab4 = st.tabs([
         "📌 Resumen General (Al Día)", 
-        "💳 Deudas TC (Estado Crédito)", 
-        "🏠 Gastos Fijos (Hogar)", 
-        "🚨 Sondeo de Imprevistos"
+        "💳 Control de Deudas (Estado Crédito)", 
+        "🏠 Detalle de Gastos Fijos (Hogar)", 
+        "🚨 Sondeo de Imprevistos & Fugas"
     ])
 
     # =========================================================================
     # TAB 1: RESUMEN GENERAL AL DÍA
     # =========================================================================
     with tab1:
-        st.subheader(f"📌 Estado Financiero: {periodo_seleccionado}")
+        st.subheader(f"📌 Flujo de Dinero: {periodo_seleccionado}")
         
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("💰 Ingresos del Período", f"${total_ingresos:,.0f} COP")
-        k2.metric("💸 Gastos del Período", f"${total_gastos:,.0f} COP")
+        k1.metric("💰 Ingresos Consignados", f"${total_ingresos:,.0f} COP")
+        k2.metric("💸 Pagos Realizados", f"${total_gastos:,.0f} COP")
         
         color_balance = "normal" if balance >= 0 else "inverse"
-        k3.metric("📈 Balance Disponible Real", f"${balance:,.0f} COP", 
-                  delta=f"{(balance/total_ingresos)*100:.1f}% remanente" if total_ingresos > 0 else "0%",
+        k3.metric("📈 Saldo Disponible en Cuenta", f"${balance:,.0f} COP", 
+                  delta=f"{(balance/total_ingresos)*100:.1f}% restante" if total_ingresos > 0 else "0%",
                   delta_color=color_balance)
 
         mask_credito = df[col_estado].str.contains('Credito|Crédito', case=False, na=False)
         df_solo_credito = df[mask_credito]
         total_credito_pendiente = df_solo_credito['Monto ($)'].sum()
-        k4.metric("💳 Pendiente Crédito", f"${total_credito_pendiente:,.0f} COP", 
+        k4.metric("💳 Deudas Pendientes", f"${total_credito_pendiente:,.0f} COP", 
                   delta=f"{len(df_solo_credito)} compras diferidas", delta_color="inverse")
 
         st.markdown("---")
@@ -202,7 +217,7 @@ if not df_completo.empty:
                 fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
             else:
-                st.info("No hay gastos registrados en esta quincena aún.")
+                st.info("Aún no tienes gastos registrados para esta quincena.")
 
         with col_g2:
             st.subheader("💳 Salidas por Método de Pago")
@@ -213,14 +228,14 @@ if not df_completo.empty:
                 st.plotly_chart(fig_bar, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("📝 Registros del Período")
+        st.subheader("📝 Movimientos Asociados a este Ciclo de Pago")
         st.dataframe(df[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
 
     # =========================================================================
     # TAB 2: AUDITORÍA DE DEUDAS
     # =========================================================================
     with tab2:
-        st.subheader("💳 Deudas Pendientes de Liquidar (Estado Crédito)")
+        st.subheader("💳 Compras en Estado 'Crédito' a Liquidar")
         d1, d2, d3 = st.columns(3)
         d1.metric("🏛️ Total Deuda Pendiente", f"${total_credito_pendiente:,.0f} COP")
         d2.metric("🔢 Compras Activas", f"{len(df_solo_credito)} compras")
@@ -241,9 +256,9 @@ if not df_completo.empty:
             with col_d2:
                 st.markdown(f"""
                 <div class="card-deudas">
-                    <h4 style="margin:0; color:#E65100;">📌 Resumen de Deuda a Liquidar</h4>
+                    <h4 style="margin:0; color:#E65100;">📌 Resumen de Deudas del Ciclo</h4>
                     <p style="margin:5px 0 0 0; color:#BF360C;">
-                        Compras diferidas pendientes por pagar con esta quincena: <b>${total_credito_pendiente:,.0f} COP</b>.
+                        Compras diferidas pendientes por pagar: <b>${total_credito_pendiente:,.0f} COP</b>.
                     </p>
                 </div>
                 """, unsafe_allow_html=True)
@@ -252,7 +267,7 @@ if not df_completo.empty:
 
             st.dataframe(df_solo_credito[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
         else:
-            st.success("🎉 No tienes consumos pendientes en estado 'Crédito' en este período.")
+            st.success("🎉 No tienes deudas en estado 'Crédito' registradas en este período.")
 
     # =========================================================================
     # TAB 3: GASTOS FIJOS
@@ -268,8 +283,8 @@ if not df_completo.empty:
 
         f1, f2, f3 = st.columns(3)
         f1.metric("🏠 Total Gastos Fijos", f"${total_fijos:,.0f} COP")
-        f2.metric("📊 % del Ingreso", f"{(total_fijos/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
-        f3.metric("📌 Rubros Activos", f"{len(df_fijos)} pagos")
+        f2.metric("📊 % de la Quincena", f"{(total_fijos/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
+        f3.metric("📌 Rubros Pagados", f"{len(df_fijos)} recibos/pagos")
 
         st.markdown("---")
         if not df_fijos.empty:
@@ -279,7 +294,7 @@ if not df_completo.empty:
             st.plotly_chart(fig_fijos, use_container_width=True)
             st.dataframe(df_fijos[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
         else:
-            st.info("No se han registrado pagos de servicios fijos en este período.")
+            st.info("No hay recibos de servicios fijos pagados en este ciclo aún.")
 
     # =========================================================================
     # TAB 4: IMPREVISTOS
@@ -301,7 +316,7 @@ if not df_completo.empty:
             st.plotly_chart(fig_imp, use_container_width=True)
             st.dataframe(df_imprevistos[['Fecha', 'Descripción', col_metodo, 'Monto ($)']], use_container_width=True, hide_index=True)
         else:
-            st.success("🎉 Sin imprevistos en este período.")
+            st.success("🎉 Sin imprevistos en este ciclo.")
 
 else:
-    st.error("No se encontraron datos en la hoja de Google Sheets.")
+    st.error("No se encontraron registros en Google Sheets.")
