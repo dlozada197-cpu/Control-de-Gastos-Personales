@@ -1,18 +1,18 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
 
 # -----------------------------------------------------------------------------
-# 1. CONFIGURACIÓN DEL APLICATIVO WEB Multi-Pestaña
+# 1. CONFIGURACIÓN DEL APLICATIVO WEB
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Control Financiero Personal | Multi-Tab",
+    page_title="Control Financiero Personal | Multi-Quincena",
     page_icon="💳",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Estilos CSS profesionales
 st.markdown("""
     <style>
     .main { background-color: #F8F9FA; }
@@ -101,7 +101,22 @@ def cargar_datos():
 
             col_fecha = [c for c in df.columns if 'fecha' in c.lower()]
             if col_fecha:
-                df['Fecha'] = pd.to_datetime(df[col_fecha[0]], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+                df['Fecha_DT'] = pd.to_datetime(df[col_fecha[0]], dayfirst=True, errors='coerce')
+                df['Fecha'] = df['Fecha_DT'].dt.strftime('%Y-%m-%d')
+            else:
+                df['Fecha_DT'] = pd.to_datetime('today')
+                df['Fecha'] = df['Fecha_DT'].dt.strftime('%Y-%m-%d')
+
+            # Asignación automática de Quincena por fecha
+            def asignar_quincena(row):
+                dt = row['Fecha_DT']
+                if pd.isna(dt):
+                    return "Sin Fecha"
+                quin = "1ra Quincena" if dt.day <= 15 else "2da Quincena"
+                mes_nombre = dt.strftime('%B %Y').capitalize()
+                return f"{quin} ({mes_nombre})"
+
+            df['Período Quincenal'] = df.apply(asignar_quincena, axis=1)
 
             return df
         else:
@@ -111,15 +126,34 @@ def cargar_datos():
         st.error(f"Error de conexión con Google Drive: {e}")
         return pd.DataFrame()
 
-df = cargar_datos()
+df_completo = cargar_datos()
 
-if not df.empty:
-    col_metodo = [c for c in df.columns if 'metodo' in c.lower() or 'pago' in c.lower()][0]
-    col_estado = [c for c in df.columns if 'estado' in c.lower()][0]
-    col_banco_list = [c for c in df.columns if 'banco' in c.lower() or 'entidad' in c.lower()]
+if not df_completo.empty:
+    col_metodo = [c for c in df_completo.columns if 'metodo' in c.lower() or 'pago' in c.lower()][0]
+    col_estado = [c for c in df_completo.columns if 'estado' in c.lower()][0]
+    col_banco_list = [c for c in df_completo.columns if 'banco' in c.lower() or 'entidad' in c.lower()]
     col_banco = col_banco_list[0] if col_banco_list else None
 
-    # Clasificación General
+    # -------------------------------------------------------------------------
+    # BARRA LATERAL: CONTROL DE PERIODO / AL DÍA
+    # -------------------------------------------------------------------------
+    st.sidebar.header("🗓️ Selector de Período (Al Día)")
+    opciones_periodo = ["Todo el Historial (Acumulado)"] + sorted(list(df_completo['Período Quincenal'].dropna().unique()), reverse=True)
+    
+    periodo_seleccionado = st.sidebar.selectbox(
+        "Ver finanzas de:",
+        opciones_periodo,
+        index=1 if len(opciones_periodo) > 1 else 0
+    )
+
+    if periodo_seleccionado != "Todo el Historial (Acumulado)":
+        df = df_completo[df_completo['Período Quincenal'] == periodo_seleccionado].copy()
+        st.info(f"📍 Mostrando datos específicos de: **{periodo_seleccionado}**")
+    else:
+        df = df_completo.copy()
+        st.warning("⚠️ Mostrando **Todo el Historial Acumulado**. Para evaluar tu dinero al día, selecciona la quincena actual en el menú izquierdo.")
+
+    # Clasificación de Ingresos y Gastos del Período
     es_ingreso = df['Categoría'].str.contains('QUIN|Ingreso|Sueldo', case=False, na=False)
     df_ingresos = df[es_ingreso]
     df_gastos = df[~es_ingreso]
@@ -128,77 +162,74 @@ if not df.empty:
     total_gastos = df_gastos['Monto ($)'].sum()
     balance = total_ingresos - total_gastos
 
-    # CREACIÓN DE PESTAÑAS MULTI-TAB
+    # TABS MULTIPESTAÑA
     tab1, tab2, tab3, tab4 = st.tabs([
-        "📌 Resumen General & Dashboard", 
-        "💳 Control de Deudas (Estado Crédito)", 
-        "🏠 Detalle de Gastos Fijos (Hogar)", 
-        "🚨 Sondeo de Imprevistos & Fugas"
+        "📌 Resumen General (Al Día)", 
+        "💳 Deudas TC (Estado Crédito)", 
+        "🏠 Gastos Fijos (Hogar)", 
+        "🚨 Sondeo de Imprevistos"
     ])
 
     # =========================================================================
-    # PESTAÑA 1: RESUMEN GENERAL
+    # TAB 1: RESUMEN GENERAL AL DÍA
     # =========================================================================
     with tab1:
-        st.subheader("📌 Resumen General del Flujo de Dinero")
+        st.subheader(f"📌 Estado Financiero: {periodo_seleccionado}")
         
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("💰 Total Ingresos", f"${total_ingresos:,.0f} COP")
-        k2.metric("💸 Total Gastos Registrados", f"${total_gastos:,.0f} COP")
+        k1.metric("💰 Ingresos del Período", f"${total_ingresos:,.0f} COP")
+        k2.metric("💸 Gastos del Período", f"${total_gastos:,.0f} COP")
         
         color_balance = "normal" if balance >= 0 else "inverse"
-        k3.metric("📈 Balance Disponible", f"${balance:,.0f} COP", 
-                  delta=f"{(balance/total_ingresos)*100:.1f}% del ingreso" if total_ingresos > 0 else "0%",
+        k3.metric("📈 Balance Disponible Real", f"${balance:,.0f} COP", 
+                  delta=f"{(balance/total_ingresos)*100:.1f}% remanente" if total_ingresos > 0 else "0%",
                   delta_color=color_balance)
 
         mask_credito = df[col_estado].str.contains('Credito|Crédito', case=False, na=False)
         df_solo_credito = df[mask_credito]
         total_credito_pendiente = df_solo_credito['Monto ($)'].sum()
-        k4.metric("💳 Deudas Pendientes (Crédito)", f"${total_credito_pendiente:,.0f} COP", 
-                  delta=f"{len(df_solo_credito)} obligaciones activas", delta_color="inverse")
+        k4.metric("💳 Pendiente Crédito", f"${total_credito_pendiente:,.0f} COP", 
+                  delta=f"{len(df_solo_credito)} compras diferidas", delta_color="inverse")
 
         st.markdown("---")
 
         col_g1, col_g2 = st.columns(2)
         with col_g1:
-            st.subheader("🍩 Distribución Global por Categoría")
-            cat_sum = df_gastos.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
-            fig_pie = px.pie(cat_sum, values='Monto ($)', names='Categoría', hole=0.45, color_discrete_sequence=px.colors.qualitative.Prism)
-            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.subheader("🍩 Distribución de Gastos")
+            if not df_gastos.empty:
+                cat_sum = df_gastos.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
+                fig_pie = px.pie(cat_sum, values='Monto ($)', names='Categoría', hole=0.45, color_discrete_sequence=px.colors.qualitative.Prism)
+                fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.info("No hay gastos registrados en esta quincena aún.")
 
         with col_g2:
-            st.subheader("💳 Gastos por Método de Pago")
-            pay_sum = df_gastos.groupby(col_metodo)['Monto ($)'].sum().reset_index()
-            fig_bar = px.bar(pay_sum, x=col_metodo, y='Monto ($)', color=col_metodo, text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Safe)
-            fig_bar.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.subheader("💳 Salidas por Método de Pago")
+            if not df_gastos.empty:
+                pay_sum = df_gastos.groupby(col_metodo)['Monto ($)'].sum().reset_index()
+                fig_bar = px.bar(pay_sum, x=col_metodo, y='Monto ($)', color=col_metodo, text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Safe)
+                fig_bar.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
+                st.plotly_chart(fig_bar, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("📝 Historial General de Movimientos")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.subheader("📝 Registros del Período")
+        st.dataframe(df[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
 
     # =========================================================================
-    # PESTAÑA 2: AUDITORÍA DE DEUDAS Y COMPRAS EN ESTADO "CRÉDITO"
+    # TAB 2: AUDITORÍA DE DEUDAS
     # =========================================================================
     with tab2:
-        st.subheader("💳 Control y Auditoría de Deudas por Pagar")
-        st.markdown("Este apartado contabiliza exclusivamente las compras y compromisos que se encuentran registrados en **Estado 'Crédito'** (valores por liquidar).")
-
+        st.subheader("💳 Deudas Pendientes de Liquidar (Estado Crédito)")
         d1, d2, d3 = st.columns(3)
         d1.metric("🏛️ Total Deuda Pendiente", f"${total_credito_pendiente:,.0f} COP")
-        d2.metric("🔢 Cantidad de Obligaciones", f"{len(df_solo_credito)} deudas")
-        
-        impacto_deuda = (total_credito_pendiente / total_ingresos * 100) if total_ingresos > 0 else 0
-        d3.metric("📊 Impacto sobre Quincena", f"{impacto_deuda:.1f}%")
+        d2.metric("🔢 Compras Activas", f"{len(df_solo_credito)} compras")
+        d3.metric("📊 Peso sobre Quincena", f"{(total_credito_pendiente/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
 
         st.markdown("---")
-
-        col_d1, col_d2 = st.columns([1, 1])
-
-        with col_d1:
-            st.markdown("##### 📊 Deudas por Categoría de Consumo")
-            if not df_solo_credito.empty:
+        if not df_solo_credito.empty:
+            col_d1, col_d2 = st.columns([1, 1])
+            with col_d1:
                 deuda_cat = df_solo_credito.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
                 fig_deuda_cat = px.bar(
                     deuda_cat, x='Categoría', y='Monto ($)', color='Categoría',
@@ -207,119 +238,70 @@ if not df.empty:
                 fig_deuda_cat.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
                 st.plotly_chart(fig_deuda_cat, use_container_width=True)
 
-        with col_d2:
-            st.markdown(f"""
-            <div class="card-deudas">
-                <h4 style="margin:0; color:#E65100;">📌 Resumen de Liquidación de Deudas</h4>
-                <p style="margin:5px 0 0 0; color:#BF360C;">
-                    <b>Compromisos activos:</b> {len(df_solo_credito)} compras a diferir/liquidar.<br>
-                    <b>Monto total acumulado:</b> ${total_credito_pendiente:,.0f} COP.
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if col_banco and not df_solo_credito.empty:
-                deuda_banco = df_solo_credito.groupby(col_banco)['Monto ($)'].sum().reset_index()
-                st.markdown("##### 🏦 Desglose por Banco / Entidad")
-                st.dataframe(deuda_banco, use_container_width=True, hide_index=True)
+            with col_d2:
+                st.markdown(f"""
+                <div class="card-deudas">
+                    <h4 style="margin:0; color:#E65100;">📌 Resumen de Deuda a Liquidar</h4>
+                    <p style="margin:5px 0 0 0; color:#BF360C;">
+                        Compras diferidas pendientes por pagar con esta quincena: <b>${total_credito_pendiente:,.0f} COP</b>.
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+                if col_banco:
+                    st.dataframe(df_solo_credito.groupby(col_banco)['Monto ($)'].sum().reset_index(), use_container_width=True, hide_index=True)
 
-        st.markdown("##### 📝 Detalle Completo de Deudas en Estado Crédito")
-        cols_deuda = ['Fecha', 'Categoría', 'Descripción']
-        if col_banco:
-            cols_deuda.append(col_banco)
-        cols_deuda.extend([col_metodo, col_estado, 'Monto ($)'])
-        
-        st.dataframe(df_solo_credito[cols_deuda], use_container_width=True, hide_index=True)
+            st.dataframe(df_solo_credito[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
+        else:
+            st.success("🎉 No tienes consumos pendientes en estado 'Crédito' en este período.")
 
     # =========================================================================
-    # PESTAÑA 3: DETALLE DE GASTOS FIJOS (SERVICIOS, ADMON, MERCADO)
+    # TAB 3: GASTOS FIJOS
     # =========================================================================
     with tab3:
-        st.subheader("🏠 Análisis Detallado de Gastos Fijos (Piso Base Mensual)")
-        st.markdown("En esta pestaña se audita el presupuesto mínimo obligatorio para operar el hogar: **Energía, Agua, Gas, Internet, Administración y Mercado**.")
-
+        st.subheader("🏠 Gastos Fijos Obligatorios (Hogar)")
         cats_fijas = [
             'Servicios - Energía', 'Servicios - Agua', 'Servicios - Gas', 
             'Servicios- Internet Hogar', 'Pago Administracion/parqueadero', 'Mercado'
         ]
         df_fijos = df_gastos[df_gastos['Categoría'].isin(cats_fijas)]
         total_fijos = df_fijos['Monto ($)'].sum()
-        porcentaje_fijos = (total_fijos / total_ingresos * 100) if total_ingresos > 0 else 0
 
         f1, f2, f3 = st.columns(3)
-        f1.metric("🏠 Total Gastos Fijos Hogar", f"${total_fijos:,.0f} COP")
-        f2.metric("📊 % del Ingreso Quincenal", f"{porcentaje_fijos:.1f}%")
-        f3.metric("📌 Promedio Estimado por Rubro", f"${(total_fijos/len(cats_fijas)):,.0f} COP")
+        f1.metric("🏠 Total Gastos Fijos", f"${total_fijos:,.0f} COP")
+        f2.metric("📊 % del Ingreso", f"{(total_fijos/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
+        f3.metric("📌 Rubros Activos", f"{len(df_fijos)} pagos")
 
         st.markdown("---")
-
-        col_f1, col_f2 = st.columns([1, 1])
-
-        with col_f1:
-            st.markdown("##### 💡 Desglose por Servicio / Rubro Fijo")
+        if not df_fijos.empty:
             fijos_sum = df_fijos.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
-            fig_fijos = px.bar(
-                fijos_sum, x='Categoría', y='Monto ($)', color='Categoría',
-                text_auto=',.0f', color_discrete_sequence=px.colors.sequential.Blues_r
-            )
-            fig_fijos.update_layout(showlegend=False, xaxis_title="", yaxis_title="COP ($)")
+            fig_fijos = px.bar(fijos_sum, x='Categoría', y='Monto ($)', color='Categoría', text_auto=',.0f', color_discrete_sequence=px.colors.sequential.Blues_r)
+            fig_fijos.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
             st.plotly_chart(fig_fijos, use_container_width=True)
-
-        with col_f2:
-            st.markdown("""
-            <div class="card-fijos">
-                <h4 style="margin:0; color:#0D47A1;">📌 Cuadro Resumen de Facturación Fija</h4>
-                <p style="margin:5px 0 0 0; color:#1565C0;">
-                    Valores liquidados en el ciclo actual de servicios fijos e insumos.
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.dataframe(fijos_sum, use_container_width=True, hide_index=True)
-
-        st.markdown("##### 📝 Registros Específicos de Gastos Fijos")
-        st.dataframe(df_fijos[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
+            st.dataframe(df_fijos[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
+        else:
+            st.info("No se han registrado pagos de servicios fijos en este período.")
 
     # =========================================================================
-    # PESTAÑA 4: SONDEO DE IMPREVISTOS Y FUGAS DE DINERO
+    # TAB 4: IMPREVISTOS
     # =========================================================================
     with tab4:
-        st.subheader("🚨 Sondeo de Imprevistos & Fugas de Dinero")
-        st.markdown("Módulo de auditoría para identificar **transferencias de emergencia, compras fuera de programa y gastos imprevistos**.")
-
+        st.subheader("🚨 Sondeo de Imprevistos & Fugas")
         df_imprevistos = df_gastos[df_gastos['Categoría'].str.contains('Imprevistos', case=False, na=False)]
         total_imprevistos = df_imprevistos['Monto ($)'].sum()
-        porcentaje_imprevistos = (total_imprevistos / total_ingresos * 100) if total_ingresos > 0 else 0
 
         i1, i2, i3 = st.columns(3)
-        i1.metric("🚨 Total Imprevistos Registrados", f"${total_imprevistos:,.0f} COP")
-        i2.metric("📊 Impacto sobre Ingresos", f"{porcentaje_imprevistos:.1f}%")
-        i3.metric("🔢 Número de Eventos", f"{len(df_imprevistos)} eventos")
+        i1.metric("🚨 Total Imprevistos", f"${total_imprevistos:,.0f} COP")
+        i2.metric("📊 Impacto en Ingreso", f"{(total_imprevistos/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
+        i3.metric("🔢 Eventos", f"{len(df_imprevistos)} eventos")
 
         st.markdown("---")
-
-        col_i1, col_i2 = st.columns([1, 1])
-
-        with col_i1:
-            st.markdown("##### 💸 Top Imprevistos / Fugas Registradas")
-            if not df_imprevistos.empty:
-                fig_imp = px.bar(
-                    df_imprevistos, x='Descripción', y='Monto ($)', color='Descripción',
-                    text_auto=',.0f', color_discrete_sequence=px.colors.sequential.Reds_r
-                )
-                fig_imp.update_layout(showlegend=False, xaxis_title="", yaxis_title="COP ($)")
-                st.plotly_chart(fig_imp, use_container_width=True)
-
-        with col_i2:
-            st.markdown("""
-            <div class="card-imprevistos">
-                <h4 style="margin:0; color:#B71C1C;">🛡️ Plan de Mitigación de Fugas</h4>
-                <p style="margin:5px 0 0 0; color:#C62828;">
-                    <b>Recomendación:</b> Para evitar que los imprevistos descompensen el presupuesto operativo del hogar, destina un <b>fondo de reserva del 5% al 10%</b> al inicio de cada quincena exclusivamente para este rubro.
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
-            if not df_imprevistos.empty:
-                st.dataframe(df_imprevistos[['Fecha', 'Descripción', col_metodo, 'Monto ($)']], use_container_width=True, hide_index=True)
+        if not df_imprevistos.empty:
+            fig_imp = px.bar(df_imprevistos, x='Descripción', y='Monto ($)', color='Descripción', text_auto=',.0f', color_discrete_sequence=px.colors.sequential.Reds_r)
+            fig_imp.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
+            st.plotly_chart(fig_imp, use_container_width=True)
+            st.dataframe(df_imprevistos[['Fecha', 'Descripción', col_metodo, 'Monto ($)']], use_container_width=True, hide_index=True)
+        else:
+            st.success("🎉 Sin imprevistos en este período.")
 
 else:
-    st.error("No se encontraron registros. Verifica la información en tu Google Sheet.")
+    st.error("No se encontraron datos en la hoja de Google Sheets.")
