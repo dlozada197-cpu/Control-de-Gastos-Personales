@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
 
 # -----------------------------------------------------------------------------
 # 1. CONFIGURACIÓN DEL APLICATIVO WEB
@@ -23,23 +22,16 @@ st.markdown("""
         box-shadow: 0px 4px 12px rgba(0,0,0,0.05);
         border-top: 4px solid #1E88E5;
     }
+    .card-cuenta {
+        background-color: #E8F5E9;
+        border-left: 5px solid #2E7D32;
+        padding: 15px;
+        border-radius: 10px;
+        margin-bottom: 15px;
+    }
     .card-deudas {
         background-color: #FFF3E0;
         border-left: 5px solid #FF9800;
-        padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 15px;
-    }
-    .card-fijos {
-        background-color: #E3F2FD;
-        border-left: 5px solid #1976D2;
-        padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 15px;
-    }
-    .card-imprevistos {
-        background-color: #FFEBEE;
-        border-left: 5px solid #D32F2F;
         padding: 15px;
         border-radius: 10px;
         margin-bottom: 15px;
@@ -48,26 +40,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("📊 Control & Dashboard Financiero Personal")
-st.caption("Sincronizado automáticamente en tiempo real con Google Drive")
+st.caption("Sincronización en tiempo real con Google Drive | Separación de Saldo Bancario y Deuda TC")
 st.markdown("---")
 
 SHEET_ID = "1izhKwlt6UnFHF9UFjq5aU6QEpVwVV8xgr-kOz3678Rg"
 URL_GVIZ = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
 
-# Diccionario de meses en español
 MESES_ES = {
     1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril',
     5: 'Mayo', 6: 'Junio', 7: 'Julio', 8: 'Agosto',
     9: 'Septiembre', 10: 'Octubre', 11: 'Noviembre', 12: 'Diciembre'
 }
 
-@st.cache_data(ttl=5) # Refresca datos automáticamente cada 5 segundos
+@st.cache_data(ttl=5)
 def cargar_datos():
     try:
         df_raw = pd.read_csv(URL_GVIZ)
         df_raw = df_raw.loc[:, ~df_raw.columns.str.contains('^Unnamed')].dropna(how='all', axis=1)
         
-        # Detectar cabecera real
         if 'Categoría' not in df_raw.columns and 'Categoria' not in df_raw.columns:
             header_idx = None
             for idx, row in df_raw.iterrows():
@@ -114,9 +104,7 @@ def cargar_datos():
                 df['Fecha_DT'] = pd.to_datetime('today')
                 df['Fecha'] = df['Fecha_DT'].dt.strftime('%Y-%m-%d')
 
-            # ASIGNACIÓN DE CICLOS REALES DE PAGO:
-            # - Gastos del 15 al 29: financiados con el pago del 15 (1ra Quincena)
-            # - Gastos del 30 al 14: financiados con el pago de fin de mes (2da Quincena)
+            # Asignación de ciclos según pago (15 al 29: 1ra Quincena | 30 al 14: 2da Quincena)
             def asignar_ciclo(row):
                 dt = row['Fecha_DT']
                 if pd.isna(dt):
@@ -125,7 +113,7 @@ def cargar_datos():
                     return f"1ra Quincena {MESES_ES[dt.month]} {dt.year} (Ciclo 15 al 29)"
                 elif dt.day >= 30:
                     return f"2da Quincena {MESES_ES[dt.month]} {dt.year} (Ciclo 30 {MESES_ES[dt.month][:3]} al 14 prox)"
-                else: # Días 1 al 14
+                else:
                     prev_m = dt.month - 1 if dt.month > 1 else 12
                     prev_y = dt.year if dt.month > 1 else dt.year - 1
                     return f"2da Quincena {MESES_ES[prev_m]} {prev_y} (Ciclo 30 {MESES_ES[prev_m][:3]} al 14 prox)"
@@ -149,39 +137,52 @@ if not df_completo.empty:
     col_banco = col_banco_list[0] if col_banco_list else None
 
     # -------------------------------------------------------------------------
-    # SELECTOR DE CICLO / QUINCENA EN LA BARRA LATERAL
+    # BARRA LATERAL: SELECTOR DE PERÍODO / CICLO
     # -------------------------------------------------------------------------
     st.sidebar.header("🗓️ Selector de Quincena (Al Día)")
     ciclos_disponibles = sorted(list(df_completo['Ciclo de Pago'].dropna().unique()), reverse=True)
     opciones_periodo = ["Todo el Historial (Acumulado)"] + ciclos_disponibles
     
     periodo_seleccionado = st.sidebar.selectbox(
-        "Selecciona el ciclo a evaluar:",
+        "Ver ciclo financiero:",
         opciones_periodo,
         index=1 if len(opciones_periodo) > 1 else 0
     )
 
     if periodo_seleccionado != "Todo el Historial (Acumulado)":
         df = df_completo[df_completo['Ciclo de Pago'] == periodo_seleccionado].copy()
-        st.info(f"📍 Mostrando finanzas del: **{periodo_seleccionado}**")
+        st.info(f"📍 Mostrando datos del: **{periodo_seleccionado}**")
     else:
         df = df_completo.copy()
-        st.warning("⚠️ Mostrando **Todo el Historial Acumulado**. Para evaluar tu dinero al día con el pago del 15, selecciona la 1ra Quincena de Octubre en la barra lateral.")
+        st.warning("⚠️ Mostrando **Todo el Historial Acumulado**.")
 
-    # Clasificación de Ingresos y Gastos del ciclo seleccionado
+    # -------------------------------------------------------------------------
+    # SEPARACIÓN MATEMÁTICA Y CONTABLE REAL
+    # -------------------------------------------------------------------------
+    # 1. Ingresos
     es_ingreso = df['Categoría'].str.contains('QUIN|Ingreso|Sueldo', case=False, na=False)
     df_ingresos = df[es_ingreso]
-    df_gastos = df[~es_ingreso]
-
     total_ingresos = df_ingresos['Monto ($)'].sum()
-    total_gastos = df_gastos['Monto ($)'].sum()
-    balance = total_ingresos - total_gastos
+
+    df_gastos_todos = df[~es_ingreso]
+
+    # 2. Pagos Realizados Efectivos (Dinero que REALMENTE salió de la cuenta/bolsillo)
+    df_pagados_reales = df_gastos_todos[df_gastos_todos[col_estado].str.contains('Pagado', case=False, na=False)]
+    total_pagado_efectivo = df_pagados_reales['Monto ($)'].sum()
+
+    # 3. Compras a Crédito (Dinero que NO ha salido de la cuenta, es deuda pendiente en tarjeta)
+    df_credito_tc = df_gastos_todos[df_gastos_todos[col_estado].str.contains('Credito|Crédito', case=False, na=False)]
+    total_deuda_tc = df_credito_tc['Monto ($)'].sum()
+
+    # 4. Cálculos de Balances
+    saldo_real_cuenta = total_ingresos - total_pagado_efectivo
+    balance_libre_proyectado = saldo_real_cuenta - total_deuda_tc
 
     # TABS MULTIPESTAÑA
     tab1, tab2, tab3, tab4 = st.tabs([
         "📌 Resumen General (Al Día)", 
-        "💳 Control de Deudas (Estado Crédito)", 
-        "🏠 Detalle de Gastos Fijos (Hogar)", 
+        "💳 Deudas TC (Estado Crédito)", 
+        "🏠 Gastos Fijos (Hogar)", 
         "🚨 Sondeo de Imprevistos & Fugas"
     ])
 
@@ -189,63 +190,73 @@ if not df_completo.empty:
     # TAB 1: RESUMEN GENERAL AL DÍA
     # =========================================================================
     with tab1:
-        st.subheader(f"📌 Flujo de Dinero: {periodo_seleccionado}")
+        st.subheader(f"📌 Estado Financiero: {periodo_seleccionado}")
         
+        # FILA 1: KPIs DE DINERO REAL EN CUENTA BANCARIA
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("💰 Ingresos Consignados", f"${total_ingresos:,.0f} COP")
-        k2.metric("💸 Pagos Realizados", f"${total_gastos:,.0f} COP")
+        k1.metric("💰 Total Ingresos", f"${total_ingresos:,.0f} COP")
+        k2.metric("💸 Pagos Realizados (Salidas Reales)", f"${total_pagado_efectivo:,.0f} COP", 
+                  help="Suma únicamente lo que ya pagaste (transferencias, débito, efectivo). No incluye deudas de TC.")
         
-        color_balance = "normal" if balance >= 0 else "inverse"
-        k3.metric("📈 Saldo Disponible en Cuenta", f"${balance:,.0f} COP", 
-                  delta=f"{(balance/total_ingresos)*100:.1f}% restante" if total_ingresos > 0 else "0%",
-                  delta_color=color_balance)
+        color_saldo = "normal" if saldo_real_cuenta >= 0 else "inverse"
+        k3.metric("🏦 Saldo Real en Cuenta Hoy", f"${saldo_real_cuenta:,.0f} COP", 
+                  delta=f"{(saldo_real_cuenta/total_ingresos)*100:.1f}% restante" if total_ingresos > 0 else "0%",
+                  delta_color=color_saldo)
 
-        mask_credito = df[col_estado].str.contains('Credito|Crédito', case=False, na=False)
-        df_solo_credito = df[mask_credito]
-        total_credito_pendiente = df_solo_credito['Monto ($)'].sum()
-        k4.metric("💳 Deudas Pendientes", f"${total_credito_pendiente:,.0f} COP", 
-                  delta=f"{len(df_solo_credito)} compras diferidas", delta_color="inverse")
+        k4.metric("💳 Deuda en Tarjeta (A Pagar)", f"${total_deuda_tc:,.0f} COP", 
+                  delta=f"{len(df_credito_tc)} compras pendientes", delta_color="inverse")
+
+        # TARJETA INFORMATIVA DIDÁCTICA
+        st.markdown(f"""
+        <div class="card-cuenta">
+            <h4 style="margin:0; color:#1B5E20;">💵 Balance Libre Proyectado: ${balance_libre_proyectado:,.0f} COP</h4>
+            <p style="margin:5px 0 0 0; color:#2E7D32;">
+                En tu cuenta bancaria tienes actualmente <b>${saldo_real_cuenta:,.0f} COP</b>. 
+                Si pagas hoy la totalidad de tus tarjetas de crédito (<b>${total_deuda_tc:,.0f} COP</b>), tu remanente limpio final será de <b>${balance_libre_proyectado:,.0f} COP</b>.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("---")
 
         col_g1, col_g2 = st.columns(2)
         with col_g1:
-            st.subheader("🍩 Distribución de Gastos")
-            if not df_gastos.empty:
-                cat_sum = df_gastos.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
+            st.subheader("🍩 Distribución de Salidas Reales (Pagadas)")
+            if not df_pagados_reales.empty:
+                cat_sum = df_pagados_reales.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
                 fig_pie = px.pie(cat_sum, values='Monto ($)', names='Categoría', hole=0.45, color_discrete_sequence=px.colors.qualitative.Prism)
                 fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                 st.plotly_chart(fig_pie, use_container_width=True)
             else:
-                st.info("Aún no tienes gastos registrados para esta quincena.")
+                st.info("No hay pagos realizados en esta quincena todavía.")
 
         with col_g2:
-            st.subheader("💳 Salidas por Método de Pago")
-            if not df_gastos.empty:
-                pay_sum = df_gastos.groupby(col_metodo)['Monto ($)'].sum().reset_index()
+            st.subheader("💳 Métodos Utilizados para Pagos Reales")
+            if not df_pagados_reales.empty:
+                pay_sum = df_pagados_reales.groupby(col_metodo)['Monto ($)'].sum().reset_index()
                 fig_bar = px.bar(pay_sum, x=col_metodo, y='Monto ($)', color=col_metodo, text_auto=',.0f', color_discrete_sequence=px.colors.qualitative.Safe)
                 fig_bar.update_layout(showlegend=False, xaxis_title="", yaxis_title="Monto ($ COP)")
                 st.plotly_chart(fig_bar, use_container_width=True)
 
         st.markdown("---")
-        st.subheader("📝 Movimientos Asociados a este Ciclo de Pago")
+        st.subheader("📝 Historial de Movimientos del Ciclo")
         st.dataframe(df[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
 
     # =========================================================================
     # TAB 2: AUDITORÍA DE DEUDAS
     # =========================================================================
     with tab2:
-        st.subheader("💳 Compras en Estado 'Crédito' a Liquidar")
+        st.subheader("💳 Compras en Estado 'Crédito' (Compromisos a Liquidar)")
         d1, d2, d3 = st.columns(3)
-        d1.metric("🏛️ Total Deuda Pendiente", f"${total_credito_pendiente:,.0f} COP")
-        d2.metric("🔢 Compras Activas", f"{len(df_solo_credito)} compras")
-        d3.metric("📊 Peso sobre Quincena", f"{(total_credito_pendiente/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
+        d1.metric("🏛️ Total Deuda en Tarjeta", f"${total_deuda_tc:,.0f} COP")
+        d2.metric("🔢 Compras Pendientes", f"{len(df_credito_tc)} compras")
+        d3.metric("📊 Peso sobre Saldo Real", f"{(total_deuda_tc/saldo_real_cuenta*100):.1f}%" if saldo_real_cuenta > 0 else "0%")
 
         st.markdown("---")
-        if not df_solo_credito.empty:
+        if not df_credito_tc.empty:
             col_d1, col_d2 = st.columns([1, 1])
             with col_d1:
-                deuda_cat = df_solo_credito.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
+                deuda_cat = df_credito_tc.groupby('Categoría')['Monto ($)'].sum().reset_index().sort_values(by='Monto ($)', ascending=False)
                 fig_deuda_cat = px.bar(
                     deuda_cat, x='Categoría', y='Monto ($)', color='Categoría',
                     text_auto=',.0f', color_discrete_sequence=px.colors.sequential.Oranges_r
@@ -256,18 +267,18 @@ if not df_completo.empty:
             with col_d2:
                 st.markdown(f"""
                 <div class="card-deudas">
-                    <h4 style="margin:0; color:#E65100;">📌 Resumen de Deudas del Ciclo</h4>
+                    <h4 style="margin:0; color:#E65100;">📌 Resumen de Deudas</h4>
                     <p style="margin:5px 0 0 0; color:#BF360C;">
-                        Compras diferidas pendientes por pagar: <b>${total_credito_pendiente:,.0f} COP</b>.
+                        Tienes <b>${total_deuda_tc:,.0f} COP</b> en compras con tarjeta que aún no han salido de tu cuenta.
                     </p>
                 </div>
                 """, unsafe_allow_html=True)
                 if col_banco:
-                    st.dataframe(df_solo_credito.groupby(col_banco)['Monto ($)'].sum().reset_index(), use_container_width=True, hide_index=True)
+                    st.dataframe(df_credito_tc.groupby(col_banco)['Monto ($)'].sum().reset_index(), use_container_width=True, hide_index=True)
 
-            st.dataframe(df_solo_credito[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
+            st.dataframe(df_credito_tc[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
         else:
-            st.success("🎉 No tienes deudas en estado 'Crédito' registradas en este período.")
+            st.success("🎉 No tienes deudas en estado 'Crédito' pendientes de liquidar.")
 
     # =========================================================================
     # TAB 3: GASTOS FIJOS
@@ -278,13 +289,13 @@ if not df_completo.empty:
             'Servicios - Energía', 'Servicios - Agua', 'Servicios - Gas', 
             'Servicios- Internet Hogar', 'Pago Administracion/parqueadero', 'Mercado'
         ]
-        df_fijos = df_gastos[df_gastos['Categoría'].isin(cats_fijas)]
+        df_fijos = df_pagados_reales[df_pagados_reales['Categoría'].isin(cats_fijas)]
         total_fijos = df_fijos['Monto ($)'].sum()
 
         f1, f2, f3 = st.columns(3)
-        f1.metric("🏠 Total Gastos Fijos", f"${total_fijos:,.0f} COP")
-        f2.metric("📊 % de la Quincena", f"{(total_fijos/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
-        f3.metric("📌 Rubros Pagados", f"{len(df_fijos)} recibos/pagos")
+        f1.metric("🏠 Total Gastos Fijos Pagados", f"${total_fijos:,.0f} COP")
+        f2.metric("📊 % del Ingreso Quincenal", f"{(total_fijos/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
+        f3.metric("📌 Facturas Pagadas", f"{len(df_fijos)} recibos")
 
         st.markdown("---")
         if not df_fijos.empty:
@@ -294,18 +305,18 @@ if not df_completo.empty:
             st.plotly_chart(fig_fijos, use_container_width=True)
             st.dataframe(df_fijos[['Fecha', 'Categoría', 'Descripción', col_metodo, col_estado, 'Monto ($)']], use_container_width=True, hide_index=True)
         else:
-            st.info("No hay recibos de servicios fijos pagados en este ciclo aún.")
+            st.info("No hay recibos de servicios fijos pagados en este período todavía.")
 
     # =========================================================================
     # TAB 4: IMPREVISTOS
     # =========================================================================
     with tab4:
         st.subheader("🚨 Sondeo de Imprevistos & Fugas")
-        df_imprevistos = df_gastos[df_gastos['Categoría'].str.contains('Imprevistos', case=False, na=False)]
+        df_imprevistos = df_pagados_reales[df_pagados_reales['Categoría'].str.contains('Imprevistos', case=False, na=False)]
         total_imprevistos = df_imprevistos['Monto ($)'].sum()
 
         i1, i2, i3 = st.columns(3)
-        i1.metric("🚨 Total Imprevistos", f"${total_imprevistos:,.0f} COP")
+        i1.metric("🚨 Imprevistos Pagados en Efectivo/Transf.", f"${total_imprevistos:,.0f} COP")
         i2.metric("📊 Impacto en Ingreso", f"{(total_imprevistos/total_ingresos*100):.1f}%" if total_ingresos > 0 else "0%")
         i3.metric("🔢 Eventos", f"{len(df_imprevistos)} eventos")
 
@@ -316,7 +327,7 @@ if not df_completo.empty:
             st.plotly_chart(fig_imp, use_container_width=True)
             st.dataframe(df_imprevistos[['Fecha', 'Descripción', col_metodo, 'Monto ($)']], use_container_width=True, hide_index=True)
         else:
-            st.success("🎉 Sin imprevistos en este ciclo.")
+            st.success("🎉 Sin imprevistos pagados en este período.")
 
 else:
     st.error("No se encontraron registros en Google Sheets.")
